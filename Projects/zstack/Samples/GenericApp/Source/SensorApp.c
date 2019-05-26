@@ -1,5 +1,5 @@
 /******************************************************************************
-  Filename:       GenericApp.c
+  Filename:       SensorApp.c
   Revised:        $Date: 2012-03-07 01:04:58 -0800 (Wed, 07 Mar 2012) $
   Revision:       $Revision: 29656 $
 
@@ -22,7 +22,7 @@
   its documentation for any purpose.
 
   YOU FURTHER ACKNOWLEDGE AND AGREE THAT THE SOFTWARE AND DOCUMENTATION ARE
-  PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+  PROVIDED ï¿½AS ISï¿½ WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
   INCLUDING WITHOUT LIMITATION, ANY WARRANTY OF MERCHANTABILITY, TITLE,
   NON-INFRINGEMENT AND FITNESS FOR A PARTICULAR PURPOSE. IN NO EVENT SHALL
   TEXAS INSTRUMENTS OR ITS LICENSORS BE LIABLE OR OBLIGATED UNDER CONTRACT,
@@ -65,8 +65,9 @@
 #include "ZDApp.h"
 #include "ZDObject.h"
 #include "ZDProfile.h"
+#include "NLMEDE.h"
 
-#include "GenericApp.h"
+#include "SensorApp.h"
 #include "DebugTrace.h"
 
 #if !defined( WIN32 )
@@ -84,6 +85,8 @@
 #include "RTOS_App.h"
 #endif  
 
+#include "DHT11.h"
+
 /*********************************************************************
  * MACROS
  */
@@ -100,29 +103,29 @@
  * GLOBAL VARIABLES
  */
 // This list should be filled with Application specific Cluster IDs.
-const cId_t GenericApp_ClusterList[GENERICAPP_MAX_CLUSTERS] =
+const cId_t SensorApp_ClusterList[SENSORAPP_MAX_CLUSTERS] =
 {
-  GENERICAPP_CLUSTERID
+  SENSORAPP_CLUSTERID
 };
 
-const SimpleDescriptionFormat_t GenericApp_SimpleDesc =
+const SimpleDescriptionFormat_t SensorApp_SimpleDesc =
 {
-  GENERICAPP_ENDPOINT,              //  int Endpoint;
-  GENERICAPP_PROFID,                //  uint16 AppProfId[2];
-  GENERICAPP_DEVICEID,              //  uint16 AppDeviceId[2];
-  GENERICAPP_DEVICE_VERSION,        //  int   AppDevVer:4;
-  GENERICAPP_FLAGS,                 //  int   AppFlags:4;
-  GENERICAPP_MAX_CLUSTERS,          //  byte  AppNumInClusters;
-  (cId_t *)GenericApp_ClusterList,  //  byte *pAppInClusterList;
-  GENERICAPP_MAX_CLUSTERS,          //  byte  AppNumInClusters;
-  (cId_t *)GenericApp_ClusterList   //  byte *pAppInClusterList;
+  SENSORAPP_ENDPOINT,              //  int Endpoint;
+  SENSORAPP_PROFID,                //  uint16 AppProfId[2];
+  SENSORAPP_DEVICEID,              //  uint16 AppDeviceId[2];
+  SENSORAPP_DEVICE_VERSION,        //  int   AppDevVer:4;
+  SENSORAPP_FLAGS,                 //  int   AppFlags:4;
+  SENSORAPP_MAX_CLUSTERS,          //  byte  AppNumInClusters;
+  (cId_t *)SensorApp_ClusterList,  //  byte *pAppInClusterList;
+  SENSORAPP_MAX_CLUSTERS,          //  byte  AppNumInClusters;
+  (cId_t *)SensorApp_ClusterList   //  byte *pAppInClusterList;
 };
 
 // This is the Endpoint/Interface description.  It is defined here, but
-// filled-in in GenericApp_Init().  Another way to go would be to fill
+// filled-in in SensorApp_Init().  Another way to go would be to fill
 // in the structure here and make it a "const" (in code space).  The
 // way it's defined in this sample app it is define in RAM.
-endPointDesc_t GenericApp_epDesc;
+endPointDesc_t SensorApp_epDesc;
 
 /*********************************************************************
  * EXTERNAL VARIABLES
@@ -135,65 +138,38 @@ endPointDesc_t GenericApp_epDesc;
 /*********************************************************************
  * LOCAL VARIABLES
  */
-byte GenericApp_TaskID;   // Task ID for internal task/event processing
+byte SensorApp_TaskID;   // Task ID for internal task/event processing
                           // This variable will be received when
-                          // GenericApp_Init() is called.
-devStates_t GenericApp_NwkState;
+                          // SensorApp_Init() is called.
+devStates_t SensorApp_NwkState;
 
 
-byte GenericApp_TransID;  // This is the unique message ID (counter)
+byte SensorApp_TransID;  // This is the unique message ID (counter)
 
-afAddrType_t GenericApp_DstAddr;
+afAddrType_t SensorApp_DstAddr;
 
-static uint8 label;
-static unsigned char R_CRCTABLE[] =  //reversed, 8-bit, poly=0x07 
-{ 
-    0x00, 0x91, 0xE3, 0x72, 0x07, 0x96, 0xE4, 0x75, 
-    0x0E, 0x9F, 0xED, 0x7C, 0x09, 0x98, 0xEA, 0x7B, 
-    0x1C, 0x8D, 0xFF, 0x6E, 0x1B, 0x8A, 0xF8, 0x69, 
-    0x12, 0x83, 0xF1, 0x60, 0x15, 0x84, 0xF6, 0x67, 
-    0x38, 0xA9, 0xDB, 0x4A, 0x3F, 0xAE, 0xDC, 0x4D, 
-    0x36, 0xA7, 0xD5, 0x44, 0x31, 0xA0, 0xD2, 0x43, 
-    0x24, 0xB5, 0xC7, 0x56, 0x23, 0xB2, 0xC0, 0x51, 
-    0x2A, 0xBB, 0xC9, 0x58, 0x2D, 0xBC, 0xCE, 0x5F, 
-    0x70, 0xE1, 0x93, 0x02, 0x77, 0xE6, 0x94, 0x05, 
-    0x7E, 0xEF, 0x9D, 0x0C, 0x79, 0xE8, 0x9A, 0x0B, 
-    0x6C, 0xFD, 0x8F, 0x1E, 0x6B, 0xFA, 0x88, 0x19, 
-    0x62, 0xF3, 0x81, 0x10, 0x65, 0xF4, 0x86, 0x17, 
-    0x48, 0xD9, 0xAB, 0x3A, 0x4F, 0xDE, 0xAC, 0x3D, 
-    0x46, 0xD7, 0xA5, 0x34, 0x41, 0xD0, 0xA2, 0x33, 
-    0x54, 0xC5, 0xB7, 0x26, 0x53, 0xC2, 0xB0, 0x21, 
-    0x5A, 0xCB, 0xB9, 0x28, 0x5D, 0xCC, 0xBE, 0x2F, 
-    0xE0, 0x71, 0x03, 0x92, 0xE7, 0x76, 0x04, 0x95, 
-    0xEE, 0x7F, 0x0D, 0x9C, 0xE9, 0x78, 0x0A, 0x9B, 
-    0xFC, 0x6D, 0x1F, 0x8E, 0xFB, 0x6A, 0x18, 0x89, 
-    0xF2, 0x63, 0x11, 0x80, 0xF5, 0x64, 0x16, 0x87, 
-    0xD8, 0x49, 0x3B, 0xAA, 0xDF, 0x4E, 0x3C, 0xAD, 
-    0xD6, 0x47, 0x35, 0xA4, 0xD1, 0x40, 0x32, 0xA3, 
-    0xC4, 0x55, 0x27, 0xB6, 0xC3, 0x52, 0x20, 0xB1, 
-    0xCA, 0x5B, 0x29, 0xB8, 0xCD, 0x5C, 0x2E, 0xBF, 
-    0x90, 0x01, 0x73, 0xE2, 0x97, 0x06, 0x74, 0xE5, 
-    0x9E, 0x0F, 0x7D, 0xEC, 0x99, 0x08, 0x7A, 0xEB, 
-    0x8C, 0x1D, 0x6F, 0xFE, 0x8B, 0x1A, 0x68, 0xF9, 
-    0x82, 0x13, 0x61, 0xF0, 0x85, 0x14, 0x66, 0xF7, 
-    0xA8, 0x39, 0x4B, 0xDA, 0xAF, 0x3E, 0x4C, 0xDD, 
-    0xA6, 0x37, 0x45, 0xD4, 0xA1, 0x30, 0x42, 0xD3, 
-    0xB4, 0x25, 0x57, 0xC6, 0xB3, 0x22, 0x50, 0xC1, 
-    0xBA, 0x2B, 0x59, 0xC8, 0xBD, 0x2C, 0x5E, 0xCF,
-};
+static uint8 Room=0x01;
+
+static struct 
+{
+
+    uint16  NWK_ADDR;
+    uint8   room;
+    uint8   sensorNum;
+    uint8   sensorType;
+    uint16  data;
+
+}SensorData;
+
 /*********************************************************************
  * LOCAL FUNCTIONS
  */
-static void GenericApp_HandleKeys( byte shift, byte keys );
-static void GenericApp_MessageMSGCB( afIncomingMSGPacket_t *pckt );
-static void GenericApp_SendTheMessage( unsigned char Data, int endPoint, int Dstaddr );
-
-static void rxCB(uint8 port,uint8 event);
-static void msgpack( uint8 type, uint8 *data, int len );
-unsigned char get_crc8(unsigned char *Buf, unsigned int Len);
+static void SensorApp_HandleKeys( byte shift, byte keys );
+static void SensorApp_MessageMSGCB( afIncomingMSGPacket_t *pckt );
+static void SensorApp_SendTheMessage( void );
 
 #if defined( IAR_ARMCM3_LM )
-static void GenericApp_ProcessRtosMessage( void );
+static void SensorApp_ProcessRtosMessage( void );
 #endif
 
 /*********************************************************************
@@ -205,7 +181,7 @@ static void GenericApp_ProcessRtosMessage( void );
  */
 
 /*********************************************************************
- * @fn      GenericApp_Init
+ * @fn      SensorApp_Init
  *
  * @brief   Initialization function for the Generic App Task.
  *          This is called during initialization and should contain
@@ -218,54 +194,49 @@ static void GenericApp_ProcessRtosMessage( void );
  *
  * @return  none
  */
-void GenericApp_Init( uint8 task_id )
+void SensorApp_Init( uint8 task_id )
 {
-  GenericApp_TaskID = task_id;
-  GenericApp_NwkState = DEV_INIT;
-  GenericApp_TransID = 0;
+  SensorApp_TaskID = task_id;
+  SensorApp_NwkState = DEV_INIT;
+  SensorApp_TransID = 0;
 
   // Device hardware initialization can be added here or in main() (Zmain.c).
   // If the hardware is application specific - add it here.
   // If the hardware is other parts of the device add it in main().
 
+  SensorApp_DstAddr.addrMode = (afAddrMode_t)Addr16Bit;
+  SensorApp_DstAddr.endPoint = 10;
+  SensorApp_DstAddr.addr.shortAddr = 0x0000;
+
   // Fill out the endpoint description.
-  GenericApp_epDesc.endPoint = GENERICAPP_ENDPOINT;
-  GenericApp_epDesc.task_id = &GenericApp_TaskID;
-  GenericApp_epDesc.simpleDesc
-            = (SimpleDescriptionFormat_t *)&GenericApp_SimpleDesc;
-  GenericApp_epDesc.latencyReq = noLatencyReqs;
+  SensorApp_epDesc.endPoint = SENSORAPP_ENDPOINT;
+  SensorApp_epDesc.task_id = &SensorApp_TaskID;
+  SensorApp_epDesc.simpleDesc
+            = (SimpleDescriptionFormat_t *)&SensorApp_SimpleDesc;
+  SensorApp_epDesc.latencyReq = noLatencyReqs;
 
   // Register the endpoint description with the AF
-  afRegister( &GenericApp_epDesc );
+  afRegister( &SensorApp_epDesc );
 
   // Register for all key events - This app will handle all key events
-  RegisterForKeys( GenericApp_TaskID );
-  /*uart init config*/
-  halUARTCfg_t uartConfig;
-  uartConfig.configured           = TRUE;              // 2x30 don't care - see uart driver.
-  uartConfig.baudRate             = HAL_UART_BR_115200;
-  uartConfig.flowControl          = FALSE;
-  uartConfig.flowControlThreshold = 64;   // 2x30 don't care - see uart driver.
-  uartConfig.rx.maxBufSize        = 128;  // 2x30 don't care - see uart driver.
-  uartConfig.tx.maxBufSize        = 128;  // 2x30 don't care - see uart driver.
-  uartConfig.idleTimeout          = 6;    // 2x30 don't care - see uart driver.
-  uartConfig.intEnable            = TRUE; // 2x30 don't care - see uart driver.
-  uartConfig.callBackFunc         = rxCB;
-  HalUARTOpen(0,&uartConfig);
+  RegisterForKeys( SensorApp_TaskID );
+
+    /*传感器硬件初始化*/
+    DHT11_init();
 
   // Update the display
 #if defined ( LCD_SUPPORTED )
-  HalLcdWriteString( "GenericApp", HAL_LCD_LINE_1 );
+  HalLcdWriteString( "SensorApp", HAL_LCD_LINE_1 );
 #endif
 
 #if defined( IAR_ARMCM3_LM )
   // Register this task with RTOS task initiator
-  RTOS_RegisterApp( task_id, GENERICAPP_RTOS_MSG_EVT );
+  RTOS_RegisterApp( task_id, SENSORAPP_RTOS_MSG_EVT );
 #endif
 }
 
 /*********************************************************************
- * @fn      GenericApp_ProcessEvent
+ * @fn      SensorApp_ProcessEvent
  *
  * @brief   Generic Application Task event processor.  This function
  *          is called to process all events for the task.  Events
@@ -277,7 +248,7 @@ void GenericApp_Init( uint8 task_id )
  *
  * @return  none
  */
-uint16 GenericApp_ProcessEvent( uint8 task_id, uint16 events )
+uint16 SensorApp_ProcessEvent( uint8 task_id, uint16 events )
 {
   afIncomingMSGPacket_t *MSGpkt;
   afDataConfirm_t *afDataConfirm;
@@ -290,14 +261,14 @@ uint16 GenericApp_ProcessEvent( uint8 task_id, uint16 events )
 
   if ( events & SYS_EVENT_MSG )
   {
-    MSGpkt = (afIncomingMSGPacket_t *)osal_msg_receive( GenericApp_TaskID );
+    MSGpkt = (afIncomingMSGPacket_t *)osal_msg_receive( SensorApp_TaskID );
     while ( MSGpkt )
     {
       switch ( MSGpkt->hdr.event )
       {
 
         case KEY_CHANGE:
-          GenericApp_HandleKeys( ((keyChange_t *)MSGpkt)->state, ((keyChange_t *)MSGpkt)->keys );
+          SensorApp_HandleKeys( ((keyChange_t *)MSGpkt)->state, ((keyChange_t *)MSGpkt)->keys );
           break;
 
         case AF_DATA_CONFIRM_CMD:
@@ -315,26 +286,19 @@ uint16 GenericApp_ProcessEvent( uint8 task_id, uint16 events )
           if ( sentStatus != ZSuccess )
           {
             // The data wasn't delivered -- Do something
-          }else{ //data has delivered send the cmd label
-              unsigned char ack[2];
-              ack[0]=0x03;
-              ack[1]=label;
-              HalUARTWrite(0,ack,2);
           }
           break;
 
-        case AF_INCOMING_MSG_CMD:
-          GenericApp_MessageMSGCB( MSGpkt );
-          break;
-
         case ZDO_STATE_CHANGE:
-          GenericApp_NwkState = (devStates_t)(MSGpkt->hdr.status);
-          if ( (GenericApp_NwkState == DEV_ZB_COORD)
-              || (GenericApp_NwkState == DEV_ROUTER)
-              || (GenericApp_NwkState == DEV_END_DEVICE) )
+          SensorApp_NwkState = (devStates_t)(MSGpkt->hdr.status);
+          if ( (SensorApp_NwkState == DEV_ZB_COORD)
+              || (SensorApp_NwkState == DEV_ROUTER)
+              || (SensorApp_NwkState == DEV_END_DEVICE) )
           {
             // Start sending "the" message in a regular interval.
-
+            osal_start_timerEx( SensorApp_TaskID,
+                                SENSORAPP_SEND_MSG_EVT,
+                                SENSORAPP_SEND_MSG_TIMEOUT );
           }
           break;
 
@@ -346,22 +310,39 @@ uint16 GenericApp_ProcessEvent( uint8 task_id, uint16 events )
       osal_msg_deallocate( (uint8 *)MSGpkt );
 
       // Next
-      MSGpkt = (afIncomingMSGPacket_t *)osal_msg_receive( GenericApp_TaskID );
+      MSGpkt = (afIncomingMSGPacket_t *)osal_msg_receive( SensorApp_TaskID );
     }
 
     // return unprocessed events
     return (events ^ SYS_EVENT_MSG);
   }
 
-#if defined( IAR_ARMCM3_LM )
-  // Receive a message from the RTOS queue
-  if ( events & GENERICAPP_RTOS_MSG_EVT )
+  // Send a message out - This event is generated by a timer
+  //  (setup in SensorApp_Init()).
+  if ( events & SENSORAPP_SEND_MSG_EVT )
   {
-    // Process message from RTOS queue
-    GenericApp_ProcessRtosMessage();
+    // Send "the" message
+    SensorApp_SendTheMessage();
+
+    // Setup to send message again
+    osal_start_timerEx( SensorApp_TaskID,
+                        SENSORAPP_SEND_MSG_EVT,
+                        SENSORAPP_SEND_MSG_TIMEOUT );
 
     // return unprocessed events
-    return (events ^ GENERICAPP_RTOS_MSG_EVT);
+    return (events ^ SENSORAPP_SEND_MSG_EVT);
+  }
+
+  
+#if defined( IAR_ARMCM3_LM )
+  // Receive a message from the RTOS queue
+  if ( events & SENSORAPP_RTOS_MSG_EVT )
+  {
+    // Process message from RTOS queue
+    SensorApp_ProcessRtosMessage();
+
+    // return unprocessed events
+    return (events ^ SENSORAPP_RTOS_MSG_EVT);
   }
 #endif
 
@@ -373,9 +354,8 @@ uint16 GenericApp_ProcessEvent( uint8 task_id, uint16 events )
  * Event Generation Functions
  */
 
-
 /*********************************************************************
- * @fn      GenericApp_HandleKeys
+ * @fn      SensorApp_HandleKeys
  *
  * @brief   Handles all key events for this device.
  *
@@ -388,7 +368,7 @@ uint16 GenericApp_ProcessEvent( uint8 task_id, uint16 events )
  *
  * @return  none
  */
-static void GenericApp_HandleKeys( uint8 shift, uint8 keys )
+static void SensorApp_HandleKeys( uint8 shift, uint8 keys )
 {
 
 }
@@ -398,7 +378,7 @@ static void GenericApp_HandleKeys( uint8 shift, uint8 keys )
  */
 
 /*********************************************************************
- * @fn      GenericApp_MessageMSGCB
+ * @fn      SensorApp_MessageMSGCB
  *
  * @brief   Data message processor callback.  This function processes
  *          any incoming data - probably from other devices.  So, based
@@ -408,19 +388,23 @@ static void GenericApp_HandleKeys( uint8 shift, uint8 keys )
  *
  * @return  none
  */
-static void GenericApp_MessageMSGCB( afIncomingMSGPacket_t *pkt )
+static void SensorApp_MessageMSGCB( afIncomingMSGPacket_t *pkt )
 {
   switch ( pkt->clusterId )
   {
-    case GENERICAPP_CLUSTERID:
+    case SENSORAPP_CLUSTERID:
       // "the" message
-      msgpack(0x01,pkt->cmd.Data,pkt->cmd.DataLength);
+#if defined( LCD_SUPPORTED )
+      HalLcdWriteScreen( (char*)pkt->cmd.Data, "rcvd" );
+#elif defined( WIN32 )
+      WPRINTSTR( pkt->cmd.Data );
+#endif
       break;
   }
 }
 
 /*********************************************************************
- * @fn      GenericApp_SendTheMessage
+ * @fn      SensorApp_SendTheMessage
  *
  * @brief   Send "the" message.
  *
@@ -428,121 +412,65 @@ static void GenericApp_MessageMSGCB( afIncomingMSGPacket_t *pkt )
  *
  * @return  none
  */
-static void GenericApp_SendTheMessage( unsigned char Data, int endPoint, int Dstaddr )
+static void SensorApp_SendTheMessage( void )
 {
-  GenericApp_DstAddr.addrMode = (afAddrMode_t)Addr16Bit;
-  GenericApp_DstAddr.endPoint = endPoint;
-  GenericApp_DstAddr.addr.shortAddr = Dstaddr;
+    unsigned char msg[7];
+    DHT11();
+    SensorData.NWK_ADDR = NLME_GetShortAddr();
+    SensorData.room = Room;
 
-  if ( AF_DataRequest( &GenericApp_DstAddr, &GenericApp_epDesc,
-                       GENERICAPP_CLUSTERID,
-                       (byte)1,
-                       (byte *)&Data,
-                       &GenericApp_TransID,
-                       AF_DISCV_ROUTE, AF_DEFAULT_RADIUS ) == afStatus_SUCCESS )
-  {
-    // Successfully requested to be sent.
-  }
-  else
-  {
-    // Error occurred in request to send.
-  }
-}
+    SensorData.sensorNum = 0x01;
+    SensorData.sensorType = 0x01;
+    SensorData.data = (uint16)ucharRH_data_H;
 
-/*********************************************************************
- * @fn      msgpackfun
- *
- * @brief   Receive message from RTOS queue, send response back.
- *
- * @param   none
- *
- * @return  none
- */
-static void msgpack(uint8 type, uint8 *data, int len )
-{   /*
-      * SOH 01
-      * EOT 04
-      * ESC 1B
-    */
-    uint8 msg[40],temp[20];
-    uint8 i,crc;
-    uint8 count=0;
-    temp[0] = type;//数据类型
-    for( i = 0; i < len; i++){
-        temp[i+1] = data[i];
+    msg[0] = SensorData.NWK_ADDR >> 8;
+    msg[1] = SensorData.NWK_ADDR & 0x00ff;
+    msg[2] = SensorData.room;
+    msg[3] = SensorData.sensorNum;
+    msg[4] = SensorData.sensorType;
+    msg[5] = SensorData.data >> 8;
+    msg[6] = SensorData.data & 0x00ff;
+
+    if ( AF_DataRequest( &SensorApp_DstAddr, &SensorApp_epDesc,
+                        SENSORAPP_CLUSTERID,
+                        (byte)7,
+                        (byte *)&msg,
+                        &SensorApp_TransID,
+                        AF_DISCV_ROUTE, AF_DEFAULT_RADIUS ) == afStatus_SUCCESS )
+    {
+        // Successfully requested to be sent.
     }
-    crc = get_crc8(temp,len+1);
-    temp[len+1]=crc;
-
-    /*对信息进行透传封装*/
-    msg[0]=0x01; //帧头
-    count +=1;
-    for( i = 0; i < len+2; i++ ){
-        if( temp[i]==0x01 || temp[i]==0x04 || temp[i]==0x1B ){
-            msg[count]=0x1B;
-            msg[count+1]=temp[i];
-            count +=2;
-        }else{
-            msg[count]=temp[i];
-            count++;
-        }
+    else
+    {
+        // Error occurred in request to send.
     }
 
-    msg[count]=0x04; //帧尾
-    count +=1;
-    HalUARTWrite(0,msg,count);
-}
+    SensorData.sensorNum = 0x02;
+    SensorData.sensorType = 0x02;
+    SensorData.data = (uint16)ucharT_data_H;
+    msg[3] = SensorData.sensorNum;
+    msg[4] = SensorData.sensorType;
+    msg[5] = SensorData.data >> 8;
+    msg[6] = SensorData.data & 0x00ff;
 
-/*********************************************************************
- * @fn      rxCB
- *
- * @brief   backcall
- *
- * @param   none
- *
- * @return  none
- */
-static void rxCB(uint8 port,uint8 event)
-{
-  if ((event & (HAL_UART_RX_FULL | HAL_UART_RX_ABOUT_FULL | HAL_UART_RX_TIMEOUT)))
-  {
-    int Dstaddr,endpoint;
-    
-    byte RxBuf[4];
-    
-    HalUARTRead(0, RxBuf, 4);
-    
-    endpoint = GENERICAPP_ENDPOINT;
-    Dstaddr = (RxBuf[1]<<8)+RxBuf[2];
-    label = RxBuf[3];
-
-    GenericApp_SendTheMessage(RxBuf[0],endpoint,Dstaddr);
-  }
-}
-
-/*********************************************************************
- * @fn      get_crc8
- *
- * @brief   get crc8 resault
- *
- * @param   none
- *
- * @return  none
- */
-unsigned char get_crc8(unsigned char *Buf, unsigned int Len)
-{
-    unsigned char *input = (unsigned char*)Buf;
-    unsigned char fcs = (unsigned char)0xFF;
-    int i;
-    for (i = 0; i < (int)Len; i++)
-        fcs = R_CRCTABLE[fcs ^ (unsigned char)input[i]];
- 
-    return (unsigned char) (0xFF - fcs);
+    if ( AF_DataRequest( &SensorApp_DstAddr, &SensorApp_epDesc,
+                        SENSORAPP_CLUSTERID,
+                        (byte)7,
+                        (byte *)&msg,
+                        &SensorApp_TransID,
+                        AF_DISCV_ROUTE, AF_DEFAULT_RADIUS ) == afStatus_SUCCESS )
+    {
+        // Successfully requested to be sent.
+    }
+    else
+    {
+        // Error occurred in request to send.
+    }
 }
 
 #if defined( IAR_ARMCM3_LM )
 /*********************************************************************
- * @fn      GenericApp_ProcessRtosMessage
+ * @fn      SensorApp_ProcessRtosMessage
  *
  * @brief   Receive message from RTOS queue, send response back.
  *
@@ -550,7 +478,7 @@ unsigned char get_crc8(unsigned char *Buf, unsigned int Len)
  *
  * @return  none
  */
-static void GenericApp_ProcessRtosMessage( void )
+static void SensorApp_ProcessRtosMessage( void )
 {
   osalQueue_t inMsg;
 
